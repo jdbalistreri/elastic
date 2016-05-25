@@ -25,6 +25,7 @@ type DateHistogramAggregation struct {
 	postZone                   string
 	preZoneAdjustLargeInterval *bool
 	format                     string
+	offset                     string
 	preOffset                  int64
 	postOffset                 int64
 	factor                     *float32
@@ -182,6 +183,11 @@ func (a DateHistogramAggregation) PreOffset(preOffset int64) DateHistogramAggreg
 	return a
 }
 
+func (a DateHistogramAggregation) Offset(offset string) DateHistogramAggregation {
+	a.offset = offset
+	return a
+}
+
 func (a DateHistogramAggregation) PostOffset(postOffset int64) DateHistogramAggregation {
 	a.postOffset = postOffset
 	return a
@@ -272,6 +278,9 @@ func (a DateHistogramAggregation) Source() interface{} {
 	}
 	if a.postOffset != 0 {
 		opts["post_offset"] = a.postOffset
+	}
+	if a.offset != "" {
+		opts["offset"] = a.offset
 	}
 	if a.factor != nil {
 		opts["factor"] = *a.factor
