@@ -1,4 +1,4 @@
-// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
+// Copyright 2012-present Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
@@ -7,12 +7,16 @@ package elastic_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"reflect"
 	"time"
 
-	"gopkg.in/olivere/elastic.v3"
+	"golang.org/x/net/context"
+	"golang.org/x/sync/errgroup"
+
+	elastic "gopkg.in/olivere/elastic.v3"
 )
 
 type Tweet struct {
@@ -29,7 +33,7 @@ type Tweet struct {
 func Example() {
 	errorlog := log.New(os.Stdout, "APP ", log.LstdFlags)
 
-	// Obtain a client. You can provide your own HTTP client here.
+	// Obtain a client. You can also provide your own HTTP client here.
 	client, err := elastic.NewClient(elastic.SetErrorLog(errorlog))
 	if err != nil {
 		// Handle error
@@ -152,7 +156,7 @@ func Example() {
 	fmt.Printf("Found a total of %d tweets\n", searchResult.TotalHits())
 
 	// Here's how you iterate through results with full control over each step.
-	if searchResult.Hits != nil {
+	if searchResult.Hits.TotalHits > 0 {
 		fmt.Printf("Found a total of %d tweets\n", searchResult.Hits.TotalHits)
 
 		// Iterate through results
@@ -326,7 +330,7 @@ func ExampleSearchService() {
 	fmt.Printf("Query took %d milliseconds\n", searchResult.TookInMillis)
 
 	// Number of hits
-	if searchResult.Hits != nil {
+	if searchResult.Hits.TotalHits > 0 {
 		fmt.Printf("Found a total of %d tweets\n", searchResult.Hits.TotalHits)
 
 		// Iterate through results
@@ -422,7 +426,7 @@ func ExampleSearchResult() {
 	fmt.Printf("Found a total of %d tweets\n", searchResult.TotalHits())
 
 	// Here's how you iterate hits with full control.
-	if searchResult.Hits != nil {
+	if searchResult.Hits.TotalHits > 0 {
 		fmt.Printf("Found a total of %d tweets\n", searchResult.Hits.TotalHits)
 
 		// Iterate through results
@@ -443,6 +447,92 @@ func ExampleSearchResult() {
 		// No hits
 		fmt.Print("Found no tweets\n")
 	}
+}
+
+func ExampleScrollService() {
+	client, err := elastic.NewClient()
+	if err != nil {
+		panic(err)
+	}
+
+	// This example illustrates how to use two goroutines to iterate
+	// through a result set via ScrollService.
+	//
+	// It uses the excellent golang.org/x/sync/errgroup package to do so.
+	//
+	// The first goroutine will Scroll through the result set and send
+	// individual results to a channel.
+	//
+	// The second goroutine will receive results from the channel and
+	// deserialize them.
+	//
+	// Feel free to add a third goroutine to do something with the
+	// deserialized results from the 2nd goroutine.
+	//
+	// Let's go.
+
+	// 1st goroutine sends individual hits to channel.
+	hits := make(chan json.RawMessage)
+	g, ctx := errgroup.WithContext(context.Background())
+	g.Go(func() error {
+		defer close(hits)
+		scroll := client.Scroll("twitter").Size(100)
+		for {
+			results, err := scroll.Do()
+			if err == io.EOF {
+				return nil // all results retrieved
+			}
+			if err != nil {
+				return err // something went wrong
+			}
+
+			// Send the hits to the hits channel
+			for _, hit := range results.Hits.Hits {
+				hits <- *hit.Source
+			}
+
+			// Check if we need to terminate early
+			select {
+			default:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	})
+
+	// 2nd goroutine receives hits and deserializes them.
+	//
+	// If you want, setup a number of goroutines handling deserialization in parallel.
+	g.Go(func() error {
+		for hit := range hits {
+			// Deserialize
+			var tw Tweet
+			err := json.Unmarshal(hit, &tw)
+			if err != nil {
+				return err
+			}
+
+			// Do something with the tweet here, e.g. send it to another channel
+			// for further processing.
+			_ = tw
+
+			// Terminate early?
+			select {
+			default:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	})
+
+	// Check whether any goroutines failed.
+	if err := g.Wait(); err != nil {
+		panic(err)
+	}
+
+	// Done.
+	fmt.Print("Successfully processed tweets in parallel via ScrollService.\n")
 }
 
 func ExamplePutTemplateService() {

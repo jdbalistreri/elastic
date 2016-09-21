@@ -1,13 +1,13 @@
-// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
+// Copyright 2012-present Oliver Eilhard. All rights reserved.
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
 package elastic
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 
@@ -20,7 +20,7 @@ const (
 
 var (
 	// End of stream (or scan)
-	EOS = errors.New("EOS")
+	EOS = io.EOF
 
 	// No ScrollId
 	ErrNoScrollId = errors.New("no scrollId")
@@ -257,7 +257,7 @@ func (s *ScanService) Do() (*ScanCursor, error) {
 
 	// Return result
 	searchResult := new(SearchResult)
-	if err := json.Unmarshal(res.Body, searchResult); err != nil {
+	if err := s.client.decoder.Decode(res.Body, searchResult); err != nil {
 		return nil, err
 	}
 
@@ -349,7 +349,7 @@ func (c *ScanCursor) Next() (*SearchResult, error) {
 
 	// Return result
 	c.Results = &SearchResult{ScrollId: body}
-	if err := json.Unmarshal(res.Body, c.Results); err != nil {
+	if err := c.client.decoder.Decode(res.Body, c.Results); err != nil {
 		return nil, err
 	}
 

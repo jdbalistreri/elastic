@@ -520,6 +520,62 @@ func TestSearchSource(t *testing.T) {
 	}
 }
 
+func TestSearchRawString(t *testing.T) {
+	client := setupTestClientAndCreateIndex(t)
+
+	tweet1 := tweet{
+		User: "olivere", Retweets: 108,
+		Message: "Welcome to Golang and Elasticsearch.",
+		Created: time.Date(2012, 12, 12, 17, 38, 34, 0, time.UTC),
+	}
+	tweet2 := tweet{
+		User: "olivere", Retweets: 0,
+		Message: "Another unrelated topic.",
+		Created: time.Date(2012, 10, 10, 8, 12, 03, 0, time.UTC),
+	}
+	tweet3 := tweet{
+		User: "sandrae", Retweets: 12,
+		Message: "Cycling is fun.",
+		Created: time.Date(2011, 11, 11, 10, 58, 12, 0, time.UTC),
+	}
+
+	// Add all documents
+	_, err := client.Index().Index(testIndexName).Type("tweet").Id("1").BodyJson(&tweet1).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.Index().Index(testIndexName).Type("tweet").Id("2").BodyJson(&tweet2).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.Index().Index(testIndexName).Type("tweet").Id("3").BodyJson(&tweet3).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.Flush().Index(testIndexName).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	query := RawStringQuery(`{"query":{"match_all":{}}}`)
+	searchResult, err := client.Search().
+		Index(testIndexName).
+		Query(query).
+		Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if searchResult.Hits == nil {
+		t.Errorf("expected SearchResult.Hits != nil; got nil")
+	}
+	if searchResult.Hits.TotalHits != 3 {
+		t.Errorf("expected SearchResult.Hits.TotalHits = %d; got %d", 3, searchResult.Hits.TotalHits)
+	}
+}
+
 func TestSearchSearchSource(t *testing.T) {
 	client := setupTestClientAndCreateIndex(t)
 
@@ -878,5 +934,62 @@ func TestSearchInnerHitsOnHasParent(t *testing.T) {
 	}
 	if innerHits.Hits.Hits[0].Id != "t3" {
 		t.Fatalf("expected inner hit with id %q; got: %q", "t3", innerHits.Hits.Hits[0].Id)
+	}
+}
+
+func TestSearchBuildURL(t *testing.T) {
+	client := setupTestClient(t)
+
+	tests := []struct {
+		Indices  []string
+		Types    []string
+		Expected string
+	}{
+		{
+			[]string{},
+			[]string{},
+			"/_search",
+		},
+		{
+			[]string{"index1"},
+			[]string{},
+			"/index1/_search",
+		},
+		{
+			[]string{"index1", "index2"},
+			[]string{},
+			"/index1%2Cindex2/_search",
+		},
+		{
+			[]string{},
+			[]string{"type1"},
+			"/_all/type1/_search",
+		},
+		{
+			[]string{"index1"},
+			[]string{"type1"},
+			"/index1/type1/_search",
+		},
+		{
+			[]string{"index1", "index2"},
+			[]string{"type1", "type2"},
+			"/index1%2Cindex2/type1%2Ctype2/_search",
+		},
+		{
+			[]string{},
+			[]string{"type1", "type2"},
+			"/_all/type1%2Ctype2/_search",
+		},
+	}
+
+	for i, test := range tests {
+		path, _, err := client.Search().Index(test.Indices...).Type(test.Types...).buildURL()
+		if err != nil {
+			t.Errorf("case #%d: %v", i+1, err)
+			continue
+		}
+		if path != test.Expected {
+			t.Errorf("case #%d: expected %q; got: %q", i+1, test.Expected, path)
+		}
 	}
 }
